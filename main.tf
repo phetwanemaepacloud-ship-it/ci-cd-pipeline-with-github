@@ -28,7 +28,6 @@ paths:
 - 'docker/nest-app/***
 'terraform-modules/nest-app/***
 
-
 #
 # ENVIRONMENT VARIABLES: Shared across all jobs
 #
@@ -48,8 +47,6 @@ RDS_DB_USERNAME: admin
 IMAGE_NAME: nest
 IMAGE TAG: latest
 jobs:
-
-
 
 # JOB 1: Build AWS Infrastructure
 #-
@@ -84,47 +81,44 @@ terraform_action: ${{ env. TERRAFORM_ACTION }}
 domain_name: ${{ env.DOMAIN_NAME}}
 rds_endpoint: ${{ env.RDS ENDPOINT }}
 task_definition_name: ${{ env.ECS_TASK_DEFINITION_NAME}} ecs_cluster_name: ${{ env. ECS_CLUSTER_NAME}} ecs_service_name: ${{ env.ECS_SERVICE_NAME}}
-# JOB 2: Build, Scan, and Push Docker Image to ECR
-build_and_push_image:
-name: Build, scan, and push Docker image to ECR
-needs: deploy_aws_infrastructure
-if: needs.deploy_aws_infrastructure.outputs.terraform_action = 'destroy' runs-on: ubuntu-latest
-steps:
-- name: Checkout repository uses: actions/checkout@v4
-- name: Build Docker image
-working-directory: ./docker/nest-app
-env:
-DOMAIN_NAME: ${{ needs.deploy_aws_infrastructure.outputs.domain_name }} 
-RDS_ENDPOINT: ${{ needs.deploy_aws_infrastructure.outputs.rds_endpoint}}
-
-
 
 # JOB 2: Build, Scan, and Push Docker Image to ECR
 #-
 build_and_push_image:
-name: Build, scan, and push Docker image to ECR
-needs: deploy_aws_infrastructure
-if: needs.deploy_aws_infrastructure.outputs.terraform_action = 'destroy' runs-on: ubuntu-latest
-steps:
-name: Checkout repository
-uses: actions/checkout@v4
-name: Build Docker image
-working-directory: ./docker/nest-app
-env:
-DOMAIN NAME: ${{ needs.deploy_aws_infrastructure.outputs.domain_name}} RDS ENDPOINT: ${{ needs.deploy_aws_infrastructure.outputs.rds_endpoint}} RDS_DB_PASSWORD: ${{ secrets. RDS_DB_PASSWORD }}
-PERSONAL_ACCESS_TOKEN: ${{ secrets. PERSONAL_ACCESS_TOKEN }}
-run: bash ./build-image.sh
-name: Scan Docker image for vulnerabilities
-uses: aquasecurity/trivy-action@master
-with:
-image-ref: ${{ env.IMAGE_NAME}}:${{ env.IMAGE_TAG}} severity: CRITICAL, HIGH
-exit-code: ${{ env.ENVIRONMENT == 'prod' && '1' || '@' }}
-format: json
-output: trivy-report.json
-name: Generate vulnerability summary
-run: |
-CRITICAL-$(ja '[.Results[]?.Vulnerabilities[]? | select(.Severity--"CRITICAL")] | length' trivy-report.json) HIGH=$(jq [Results[]?.Vulnerabilities[]? | select(„Severity=="HIGH")] | length: trivy-report.json) 70
-HIGH-$(ja '[.Results[]?.Vulnerabilities[]? | select(.Severity--"CRITICAL")] | length' trivy-report.json) HIGH=$(jq [Results[]?.Vulnerabilities[]? | select(„Severity=="HIGH")] | length: trivy-report.json) 70
+  name: Build, scan, and push Docker image to ECR
+  needs: deploy_aws_infrastructure
+  if: needs.deploy_aws_infrastructure.outputs.terraform_action = 'destroy' 
+  runs-on: ubuntu-latest
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Checkout make script executable 
+      working-directory: ./docker/nest-app
+      run: chmod +x build-image.sh push-image.sh
+
+    - name: Build Docker image
+      working-directory: ./docker/nest-app
+      env:
+        DOMAIN NAME: ${{ needs.deploy_aws_infrastructure.outputs.domain_name}} 
+        RDS ENDPOINT: ${{ needs.deploy_aws_infrastructure.outputs.rds_endpoint}} 
+        RDS_DB_PASSWORD: ${{ secrets. RDS_DB_PASSWORD }}
+        PERSONAL_ACCESS_TOKEN: ${{ secrets. PERSONAL_ACCESS_TOKEN }}
+      run: bash ./build-image.sh
+
+    - name: Scan Docker image for vulnerabilities
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.IMAGE_NAME}}:${{ env.IMAGE_TAG}} severity: CRITICAL, HIGH
+        exit-code: ${{ env.ENVIRONMENT == 'prod' && '1' || '@' }}
+        format: json
+        output: trivy-report.json
+
+    - name: Generate vulnerability summary
+      run: |
+        CRITICAL-$(ja '[.Results[]?.Vulnerabilities[]? | select(.Severity--"CRITICAL")] | length' trivy-report.json) HIGH=$(jq [Results[]?.Vulnerabilities[]? | select(„Severity=="HIGH")] | length: trivy-report.json) 70
+        HIGH-$(ja '[.Results[]?.Vulnerabilities[]? | select(.Severity--"CRITICAL")] | length' trivy-report.json) 
+        TOTAL=$((CRITICAL + HIGH)) 
 
 name: Push Docker image to ECR working-directory: ./docker/nest-app run: bash ./push-image.sh
 outputs:
