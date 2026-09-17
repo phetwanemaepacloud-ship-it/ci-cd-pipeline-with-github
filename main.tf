@@ -149,4 +149,29 @@ build_and_push_image:
   outputs:
   scan_summary: ${{ env.SCAN_SUMMARY }}
 
+# ==========================================================
+# JOB 3: Create New Task Definition Revision
+# ==========================================================
+create_task_definition_revision:
+  name: Create new task definition revision
+  needs:
+    - deploy_aws_infrastructure
+    - build_and_push_image
+  if: needs.deploy_aws_infrastructure.outputs.terraform_action != 'destroy'
+  runs-on: ubuntu-latest
+  steps:
+    - name: Get current task definition revision
+      env:
+        ECS_FAMILY: ${{ needs.deploy_aws_infrastructure.outputs.task_definition_name}} 
+      run: |
+       CURRENT_REVISION-$(aws ecs describe-task-definition --task-definition "${ECS_FAMILY}" \ 
+         --query 'taskDefinition.revision' --output text)
+       echo "CURRENT_TASK_DEFINITION_REVISION=$CURRENT_REVISION" >> $GITHUB_ENV
+    - name: Create new task definition revision
+      env:
+        ECS_FAMILY: ${{ needs.deploy_aws_infrastructure.outputs.task_definition_name }}
+        ECS_IMAGE: ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS REGION }).amazonaws.com/${{ env.IMAGE_NAME}}:${{ env.IN 
+      run: |
+        TASK DEFINITION=$(aws ecs describe-task-definition --task-definition "${ECS_FAMILY}")
+
 
