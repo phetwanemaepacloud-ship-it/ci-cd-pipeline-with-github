@@ -203,7 +203,9 @@ ECS_CLUSTER_NAME: ${{ needs.deploy_aws_infrastructure.outputs.ecs_cluster_name }
 run: |
 aws ecs update-service cluster "${ECS_CLUSTER_NAME}" --service "${ECS_SERVICE_NAME}" \ --task-definition "$(TASK_DEFINITION_NAME}:${TASK_DEFINITION_REVISION)" --force-new-deployment
 aws ecs wait services-stable cluster "${ECS_CLUSTER_NAME}" --services "${ECS_SERVICE_NAME}"
-# 308 5: Test Application Health
+
+#
+# JOB 5: Test Application Health
 #--
 test_application:
 name: Test application health needs:
@@ -224,6 +226,8 @@ else
 fi
 echo "Application health check failed"
 exit 1
+
+#
 # JOB 6: Monitor ECS Deployment
 #
 monitor_deployment:
@@ -232,3 +236,102 @@ needs:
 - deploy_aws_infrastructure
 - restart_ecs_service
 if: needs.deploy_aws_infrastructure.outputs.terraform_action != 'destroy'
+
+
+if: needs.deploy_aws_infrastructure.outputs.terraform_action != 'destroy' runs-on: ubuntu-latest
+steps:
+- name: Check ECS running tasks
+env:
+ECS_CLUSTER_NAME: ${{ needs.deploy_aws_infrastructure.outputs.ecs_cluster_name }} ECS_SERVICE_NAME: ${{ needs.deploy_aws_infrastructure.outputs.ecs_service_name }}
+run: [
+RUNNING COUNT=$(aws ecs describe-services \
+--cluster "${ECS_CLUSTER_NAME}" \
+--services "${ECS_SERVICE_NAME}" \
+--query "service[0].runningCount" \ --output text)
+DESIRED COUNT=$(aws ecs describe-services \
+--cluster "${ECS_CLUSTER_NAME}" \
+--services "${ECS_SERVICE_NAME}" \
+--query "service[0].desiredCount" \
+--output text)
+echo "Running tasks: $RUNNING COUNT / Desired tasks: $DESIRED_COUNT"
+if [ "$RUNNING_COUNT" -eq "$DESIRED_COUNT" ]; then
+echo "All tasks are running successfully"
+else
+echo "Task count mismatch - deployment may have issues" exit 1
+fi
+
+#
+# JOB 7: Rollback on Failure
+# 
+rollback:
+name: Rollback to previous version
+needs:
+deploy_aws_infrastructure
+create_task_definition_revision
+- restart_ecs_service
+-
+test_application
+- monitor_deployment
+if: failure() && needs.deploy_aws_infrastructure.outputs.terraform_action = 'destroy' runs-on: ubuntu-latest
+steps:
+- name: Rollback ECS service to previous task definition
+env:
+ECS_CLUSTER_NAME: ${{ needs.deploy_aws_infrastructure.outputs.ecs_cluster_name }} ECS_SERVICE_NAME: ${{ needs.deploy_aws_infrastructure.outputs.ecs_service_name }}
+TASK_DEFINITION_NAME: ${{ needs.deploy_aws_infrastructure.outputs.task_definition_name}} PREVIOUS_REVISION: ${{ needs.create_task_definition_revision.outputs.current_task_definition_revision }}
+run: |
+echo "Rolling back to task definition revision: $PREVIOUS_REVISION"
+aws ecs update-service --cluster "${ECS_CLUSTER_NAME}" --service "${ECS_SERVICE_NAME}" \ --task-definition "${TASK_DEFINITION_NAME}:${PREVIOUS_REVISION}" -force-new-deployment
+aws ecs wait services-stable --cluster "${ECS_CLUSTER_NAME}" --services "${ECS_SERVICE_NAME}" echo "Rollback complete"
+
+# 
+#JOB 8: Send Notification
+# 
+notify:
+name: Send notification
+needs:
+deploy_aws_infrastructure
+- build_and_push_image
+-
+-
+-
+create_task_definition_revision
+restart_ecs_service
+test_application
+- monitor_deployment
+if: always() &&
+runs-on: <RUNNER_OS>
+steps:
+- name: Send Slack notification
+uses: <SLACK_ACTION>
+with:
+webhook: $ secrets. <SLACK_WEBHOOK_SECRET_NAME> }}
+webhook-type: <WEBHOOK_TYPE>
+payload: |
+{
+"text": "${{ needs.test_application.result == 'success' && needs.monitor_deployment.result == 'success' && "blocks": [
+{
+"type": "header",
+"text": {
+"type": "plain_text",
+"text": "${{ needs.test_application.result == 'success' && needs.monitor_deployment.result == 'success
+
+
+"text": {
+"type": "plain_text",
+Aa ab 20 of 20
+"text": "${{ needs.test_application.result == 'success' && needs.monitor_deployment.result == 'success' &&
+Deplo
+"type": "section",
+"fields":[
+{ "type": "mrkdwn", "text": "*Project:*\n${{ env.PROJECT_NAME}}" },
+{ "type": "mrkdwn", "text": "*Environment:"\n${{ env.ENVIRONMENT }}" },
+{ "type": "mrkdwn", "text": "*Image:*\n${{ env.IMAGE_NAME}}:${{ env.IMAGE_TAG}}" },
+{ "type": "mrkdwn", "text": "*Triggered by:*\n${{ github.actor }}" }
+"type": "section",
+"text": {
+"type": "arkdwn",
+"text": "*Security Scan:* \n${{ needs.build_and_push_image.outputs.scan_summary || 'Scan not available' }}"
+"type": "section",
+"text": {
+"type": "mrkdwn",
+"text": "*Pipeline:* <${{ github.server_url}}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Run"
