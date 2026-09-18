@@ -174,4 +174,61 @@ create_task_definition_revision:
       run: |
         TASK DEFINITION=$(aws ecs describe-task-definition --task-definition "${ECS_FAMILY}")
 
+        NEW TASK_DEFINITION=$(echo "$TASK_DEFINITION" | ja -arg IMAGE "${ECS_IMAGE}" \
+          '.taskDefinition | .containerDefinitions[0].image = $IMAGE
+          del(.taskDefinitionArn, .revision, status, .requiresAttributes, .compatibilities, registeredAt, .registeredBy 
 
+        NEW_TASK_DEFINITION_REVISION=$(aws ecs register-task-definition --cli-input-json "$NEW TASK_DEFINITION" | ja tal
+        echo "NEW_TASK_DEFINITION_REVISION=$NEW_TASK_DEFINITION_REVISION" >> $GITHUB_ENV
+
+outputs:
+  new_task_definition_revision: ${{ env.NEW_TASK_DEFINITION_REVISION }}
+  current_task_definition_revision: ${{ env. CURRENT TASK_DEFINITION_REVISION }}
+
+#==========================================================
+#JOB 4: Restart ECS Fargate Service
+#==========================================================
+restart_ecs_service:
+  name: Restart ECS Fargate service
+  needs:
+    - deploy_aws_infrastructure
+    - create_task_definition_revision
+  if: needs.deploy_aws_infrastructure.outputs.terraform_action = 'destroy'
+
+if: needs.deploy_aws_infrastructure.outputs.terraform_action != 'destroy' runs-on: ubuntu-latest
+steps:
+name: Restart ECS service
+env:
+ECS_CLUSTER_NAME: ${{ needs.deploy_aws_infrastructure.outputs.ecs_cluster_name }} ECS_SERVICE_NAME: ${{ needs.deploy_aws_infrastructure.outputs.ecs_service_name}} TASK_DEFINITION_NAME: ${{ needs.deploy_aws_infrastructure.outputs.task_definition_name}} TASK_DEFINITION_REVISION: ${{ needs.create_task_definition_revision.outputs.new_task_definition_revision }}
+run: |
+aws ecs update-service cluster "${ECS_CLUSTER_NAME}" --service "${ECS_SERVICE_NAME}" \ --task-definition "$(TASK_DEFINITION_NAME}:${TASK_DEFINITION_REVISION)" --force-new-deployment
+aws ecs wait services-stable cluster "${ECS_CLUSTER_NAME}" --services "${ECS_SERVICE_NAME}"
+# 308 5: Test Application Health
+#--
+test_application:
+name: Test application health needs:
+- deploy_aws_infrastructure
+- restart_ecs_service
+
+if: needs.deploy_aws_infrastructure.outputs.terraform_action != 'destroy' runs on: ubuntu-latest
+steps:
+name: Wait for service to stabilize
+run: sleep 30
+- name: Check application health
+env:
+DOMAIN NAME: ${{ needs.deploy_aws_infrastructure.outputs.domain_name}} run: |
+RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "https://www.${DOMAIN_NAME} echo "HTTP Status: $RESPONSE"
+if [ "$RESPONSE" -eq 200 ]; then
+echo "Application is healthy"
+else
+fi
+echo "Application health check failed"
+exit 1
+# JOB 6: Monitor ECS Deployment
+#
+monitor_deployment:
+name: Monitor ECS deployment
+needs:
+- deploy_aws_infrastructure
+- restart_ecs_service
+if: needs.deploy_aws_infrastructure.outputs.terraform_action != 'destroy'
